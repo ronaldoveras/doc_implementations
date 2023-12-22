@@ -1,3 +1,5 @@
+import re
+
 import pandas as pd
 import numpy as np
 
@@ -34,6 +36,8 @@ FEATURES = [FIX_COL, 'ns', 'nd', NF_COL, 'entrophy', LA_COL,
 # [FIX_COL, 'ns', 'nd', NF_COL, 'entrophy', LT_COL, 'ndev', 'age', 'nuc', 'exp', 'rexp', 'sexp']
 LABEL = CONTAINS_BUG_COL
 
+RAW_DATASETS = ['brackets', 'camel', 'fabric8', 'jgroups', 'neutron', 'tomcat']
+PREPROCESSED_DATASETS = ['broadleaf', 'nova', 'npm', 'spring-integration']
 def preprocess_daystofix(df_raw):
     label = CONTAINS_BUG_COL
     preprocess_cols = [TIMESTAMP_COL,
@@ -53,6 +57,44 @@ def preprocess_daystofix(df_raw):
                                                                 'timestamp'] + df_preprocess.loc[bug, DAYSTOFIX_COL] * 24 * 60 * 60
 
     return df_preprocess
+
+def prequential(df_preprocess):
+    prequential_cols = ['timestamp', 'timestamp_fix'] + \
+        FEATURES + ['target']
+    df_prequential = df_preprocess[prequential_cols].copy()
+    df_prequential['timestep'] = range(len(df_prequential))
+    return df_prequential
+
+def make_stream(dataset):
+    # df_raw = download(format_url(dataset))
+    if dataset in RAW_DATASETS:
+        df_preprocess = preprocess(dataset)
+    elif dataset in PREPROCESSED_DATASETS:
+        df_preprocess = preprocess_daystofix(dataset)
+    else:
+        raise NotImplementedError('Dataset not supported: {}.'.format(dataset))
+    return prequential(df_preprocess)
+
+def preprocess(df_raw):
+    preprocess_cols = ['commit_hash', 'author_date_unix_timestamp',
+                       'fixes'] + FEATURES + [LABEL]
+    df_preprocess = df_raw[preprocess_cols].copy()
+    # timestamp
+    df_preprocess = df_preprocess.rename(columns={'author_date_unix_timestamp': 'timestamp',
+                                                  LABEL: 'target'})
+    # convert fix
+    df_preprocess['fix'] = df_preprocess['fix'].astype('int')
+    # timeline order
+    df_preprocess = df_preprocess[::-1]
+    df_preprocess = df_preprocess.reset_index(drop=True)
+    # convert contains_bug
+    df_preprocess['target'] = df_preprocess['target'].astype('int')
+    # fixes
+    df_preprocess['commit_hash_fix'] = df_preprocess['fixes'].dropna().apply(
+        lambda x: re.findall('\\b\\w+\\b', x)[0])
+    df_fix = df_preprocess[['commit_hash', 'timestamp']
+                           ].set_index('commit_hash')
+    return df_preprocess.join(df_fix, on='commit_hash_fix', how='left', rsuffix='_fix')
 
 def alterarData(df):
         df[TIMESTAMP_COL] = pd.to_datetime(df[TIMESTAMP_COL], unit='s')
